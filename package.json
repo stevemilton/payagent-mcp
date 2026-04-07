@@ -1,0 +1,55 @@
+{
+  "name": "payagent-mcp",
+  "version": "1.0.0",
+  "description": "MCP server that lets AI agents pay for APIs using USDC stablecoins via the x402 protocol. Use with Claude Desktop, Cursor, or any MCP client.",
+  "type": "module",
+  "bin": {
+    "payagent-mcp": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "ai-agent",
+    "http-402",
+    "x402",
+    "payment",
+    "usdc",
+    "stablecoin",
+    "claude",
+    "cursor",
+    "windsurf",
+    "agent-tool"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "author": "Polar Industries Ltd",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stevemilton/payagent-mcp.git"
+  },
+  "homepage": "https://github.com/stevemilton/payagent-mcp#readme",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "ethers": "^6.13.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.7.0"
+  }
+}
