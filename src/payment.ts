@@ -85,18 +85,28 @@ function extractAccepts(body: Record<string, unknown>): X402Accept[] {
   throw new Error('Unrecognized 402 payment requirements format');
 }
 
-async function parseRequirements(response: Response): Promise<X402Accept[]> {
-  let body: Record<string, unknown>;
+const AGFAC_FACILITATOR_URL = 'https://agfac-production.up.railway.app';
+
+interface ParsedRequirements {
+  accepts: X402Accept[];
+  facilitatorUrl?: string;
+}
+
+async function parseRequirements(response: Response): Promise<ParsedRequirements> {
+  let json: Record<string, unknown>;
   try {
-    const json = await response.json();
-    body = json.requirements ?? json;
+    json = await response.json();
   } catch {
     throw new Error('402 response body is not valid JSON');
   }
+  const body = (json.requirements ?? json) as Record<string, unknown>;
   if (!body || typeof body !== 'object' || body.x402Version !== 2) {
     throw new Error('Missing x402Version: 2 in 402 response');
   }
-  return extractAccepts(body);
+  return {
+    accepts: extractAccepts(body),
+    facilitatorUrl: typeof json.facilitator === 'string' ? json.facilitator : undefined,
+  };
 }
 
 // ── Sign ────────────────────────────────────────────
@@ -176,6 +186,38 @@ export class SpendTracker {
   get history(): readonly PaymentReceipt[] { return this.receipts; }
 }
 
+// ── Facilitator pre-flight verification ─────────────
+
+async function verifyWithFacilitator(
+  facilitatorUrl: string,
+  paymentHeader: string,
+  accept: X402Accept,
+): Promise<void> {
+  try {
+    const payload = JSON.parse(Buffer.from(paymentHeader, 'base64').toString('utf-8'));
+    const res = await fetch(`${facilitatorUrl}/facilitator/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        paymentPayload: payload,
+        paymentRequirements: accept,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (res.ok) {
+      const result = await res.json() as { valid: boolean; error?: string };
+      if (!result.valid) {
+        throw new Error(`Payment invalid: ${result.error ?? 'unknown reason'}`);
+      }
+    }
+  } catch (err) {
+    // If it's our own validation error, rethrow
+    if (err instanceof Error && err.message.startsWith('Payment invalid')) throw err;
+    // Network errors are non-fatal: skip verification, let the server settle
+  }
+}
+
 // ── Main: handle 402 flow ───────────────────────────
 
 export async function handlePaidRequest(
@@ -205,8 +247,8 @@ export async function handlePaidRequest(
     };
   }
 
-  // Parse 402
-  const accepts = await parseRequirements(response);
+  // Parse 402 (includes facilitator URL from response body)
+  const { accepts, facilitatorUrl: responseFacilitator } = await parseRequirements(response);
   if (accepts.length === 0) {
     throw new Error('No payment options in 402 response');
   }
@@ -224,10 +266,15 @@ export async function handlePaidRequest(
   // Check budget
   options.tracker.checkPayment(accept.maxAmountRequired);
 
-  // Sign and retry
+  // Sign
   const wallet = new ethers.Wallet(options.privateKey);
   const paymentHeader = await signPayment(accept, wallet);
 
+  // Pre-verify with facilitator (AgFac by default)
+  const facilitator = responseFacilitator ?? AGFAC_FACILITATOR_URL;
+  await verifyWithFacilitator(facilitator, paymentHeader, accept);
+
+  // Retry with payment header
   const retryHeaders = new Headers(init.headers as HeadersInit | undefined);
   retryHeaders.set('X-PAYMENT', paymentHeader);
 
